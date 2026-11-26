@@ -448,6 +448,13 @@ async function boot(){
   await refresh();
 }
 
+/* 맨 위 "오늘한컷" 글씨 = 홈 버튼 (이미 오늘 탭이면 맨 위로 올리고 새로 불러옴) */
+document.getElementById("homeLink").addEventListener("click",e=>{
+  e.preventDefault(); S.renaming=false; S.err="";
+  if (location.hash!=="#today") history.pushState(null,"","#today");
+  window.scrollTo({top:0,behavior:"smooth"}); render();
+  if (S.status==="ready" && !S.busy) refresh();
+});
 window.addEventListener("hashchange",()=>{ if (/^#join=/.test(location.hash)){ location.reload(); return; } S.err=""; render(); window.scrollTo(0,0); });
 document.addEventListener("visibilitychange",()=>{ if (document.visibilityState==="visible" && S.status==="ready" && !S.busy) refresh(); });
 setInterval(()=>{
