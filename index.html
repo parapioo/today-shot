@@ -125,6 +125,12 @@ nav.tabs a[aria-current="page"]{background:var(--grad);color:#fff;box-shadow:0 8
 .names{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .names .btn{font-family:var(--display);font-size:1.45rem;font-weight:700;padding:18px 8px}
 .names .btn:hover{border-color:var(--accent);box-shadow:0 8px 20px -10px rgba(120,90,255,.7)}
+.howto h3{font-family:var(--display);font-size:1.35rem;margin:0}
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;counter-reset:st}
+.steps li{display:flex;gap:12px;align-items:flex-start}
+.steps .ic{flex:none;width:40px;height:40px;border-radius:14px;display:grid;place-items:center;font-size:1.25rem;background:var(--accent-soft);border:1px solid var(--line)}
+.steps b{display:block;font-weight:600}
+.steps p{margin:1px 0 0;color:var(--muted);font-size:.88rem;line-height:1.45}
 .confetti{position:fixed;inset:0;pointer-events:none;z-index:20;overflow:hidden}
 .confetti i{position:absolute;top:-12px;width:9px;height:14px;border-radius:2px;opacity:.95;animation:fall var(--d,1.6s) cubic-bezier(.25,.6,.4,1) forwards}
 @keyframes fall{to{transform:translate3d(var(--x,0),105vh,0) rotate(var(--r,540deg));opacity:.2}}

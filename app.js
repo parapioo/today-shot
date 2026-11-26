@@ -330,9 +330,22 @@ function viewPick(){
   return [h("section",{},
     h("div",{},h("h2",{},"나는 누구인가요?"),h("p",{class:"sub"},"가족 안에서 쓸 이름을 골라주세요.")),
     h("div",{class:"card"},grid,
-      h("p",{class:"sub"},"폰을 바꿨다면 원래 이름을 다시 고르면 돼요. 이미 쓰는 이름을 고르면 그 이름이 이 폰으로 옮겨와요."),
       S.renaming?h("button",{class:"btn",onclick:()=>{S.renaming=false;S.err="";render();}},"취소"):null,
-      errLine()))];
+      errLine()),
+    howTo())];
+}
+/* 이용 방법과 투표 규칙 */
+function howTo(){
+  const steps=[
+    ["📸","오늘의 한 컷","하루에 딱 1장, 밤 12시까지 올려요. 마감 전엔 바꿀 수 있어요."],
+    ["🗳️","다음 날 투표","낮 12시까지 가장 마음에 드는 사진에 1표! 내 사진엔 못 찍어요."],
+    ["👑","낮 12시 1위 공개","표가 같으면 모두 1위. 꼴찌는 보여주지 않아요."],
+    ["🎨","이번 주의 그림","한 주 동안 가장 많은 표를 받은 사진을 짱토리가 오일파스텔로 그려줘요."]
+  ];
+  return h("div",{class:"card howto"},
+    h("h3",{},"오늘한컷은 이렇게 해요"),
+    h("ol",{class:"steps"},steps.map(([ic,t,d])=>h("li",{},h("span",{class:"ic","aria-hidden":"true"},ic),h("div",{},h("b",{},t),h("p",{},d))))),
+    h("p",{class:"sub"},"내 사진을 올려야 가족의 오늘 사진이 보여요. 모든 시간은 한국 시간이에요."));
 }
 function viewMessage(title, body){ return [h("section",{},h("h2",{},title),h("p",{class:"notice warn"},body))]; }
 
