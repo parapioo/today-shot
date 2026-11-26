@@ -17,7 +17,7 @@ const SLOTS = [
 
 const S = {
   sb:null, me:null, members:{}, photos:[], votes:[], paintings:{},
-  urls:{}, status:"loading", busy:false, err:"", captionDraft:"", joinCode:null, renaming:false, slow:false
+  urls:{}, status:"loading", busy:false, err:"", errDetail:"", captionDraft:"", joinCode:null, renaming:false, slow:false
 };
 
 /* ---------- 시간 (항상 한국 시간) ---------- */
@@ -104,6 +104,7 @@ async function compress(file){
   return await new Promise((res,rej)=>c.toBlob(b=>b?res(b):rej(new Error("encode")),"image/jpeg",0.85));
 }
 function rand(){ const a=new Uint8Array(6); crypto.getRandomValues(a); return [...a].map(x=>x.toString(16).padStart(2,"0")).join(""); }
+function detail(e){ if (!e) return ""; return [e.code, e.status, e.message||e.error_description||e.error].filter(Boolean).join(" · ").slice(0,200); }
 function friendly(e, fallback){
   const m=String((e && (e.message||e.error_description||e.error)) || "");
   if (e && e.friendly) return e.friendly;
@@ -341,7 +342,7 @@ function render(){
   if (S.status==="loading") nodes=[h("div",{class:"empty"},"가족 사진을 불러오는 중이에요…")];
   else if (S.status==="config") nodes=viewMessage("설정이 아직 안 됐어요","config.js 에 Supabase 주소와 공개 키를 넣어주세요.");
   else if (S.status==="noinvite") nodes=viewMessage("초대 링크로 열어주세요","가족에게 받은 초대 링크(#join= 이 붙은 주소)로 한 번만 열면, 다음부터는 그냥 열려요.");
-  else if (S.status==="offline") nodes=viewMessage("연결이 안 돼요", S.err||"인터넷 연결을 확인한 뒤 화면을 새로 고쳐주세요.");
+  else if (S.status==="offline"){ nodes=viewMessage("연결이 안 돼요", S.err||"인터넷 연결을 확인한 뒤 화면을 새로 고쳐주세요."); if (S.errDetail) nodes.push(h("p",{class:"sub"},"자세한 내용: "+S.errDetail)); nodes.push(h("button",{class:"btn",onclick:()=>location.reload()},"다시 시도")); }
   else if (S.status==="pick" || S.renaming) nodes=viewPick();
   else nodes = v==="vote"?viewVote(now): v==="result"?viewResult(now): v==="gallery"?viewGallery(now): viewToday(now);
   if (S.slow && S.status==="ready") nodes.unshift(h("p",{class:"notice"},"일부 사진을 불러오지 못했어요. 인터넷 연결을 확인해주세요."));
@@ -374,7 +375,7 @@ async function refresh(){
     S.status="ready";
   }catch(e){
     if (S.status==="ready") S.slow=true;
-    else { S.status="offline"; S.err=friendly(e,"가족 정보를 불러오지 못했어요. 잠시 후 화면을 새로 고쳐주세요."); }
+    else { S.status="offline"; S.err=friendly(e,"가족 정보를 불러오지 못했어요. 잠시 후 화면을 새로 고쳐주세요."); S.errDetail=detail(e); }
   }
   render();
 }
@@ -393,14 +394,14 @@ async function boot(){
   const cfg=window.TODAY_SHOT_CONFIG||{};
   if (!cfg.supabaseUrl || /YOUR-/.test(cfg.supabaseUrl+cfg.supabaseAnonKey) || !window.supabase){ S.status="config"; render(); return; }
   S.joinCode=readJoinCode();
-  S.sb=window.supabase.createClient(cfg.supabaseUrl,cfg.supabaseAnonKey,{auth:{persistSession:true,autoRefreshToken:true,storageKey:"todayshot.auth"}});
+  S.sb=window.supabase.createClient(cfg.supabaseUrl,cfg.supabaseAnonKey,{auth:{persistSession:true,autoRefreshToken:true,storageKey:"todayshot.auth",lock:async (name,timeout,fn)=>await fn()}});
   try{
     let {data}=await S.sb.auth.getSession();
     if (!data.session){
       if (!S.joinCode){ S.status="noinvite"; render(); return; }
       const r=await S.sb.auth.signInAnonymously(); if (r.error) throw r.error;
     }
-  }catch(e){ S.status="offline"; S.err=friendly(e,"로그인하지 못했어요. 잠시 후 화면을 새로 고쳐주세요."); render(); return; }
+  }catch(e){ S.status="offline"; S.err=friendly(e,"로그인하지 못했어요. 잠시 후 화면을 새로 고쳐주세요."); S.errDetail=detail(e); render(); return; }
   await refresh();
 }
 

@@ -20,6 +20,7 @@
 4. 붙여넣은 화면에서만 맨 아래 `CHANGE-ME-family-code` 를 가족만 아는 영문·숫자 10자 이상 코드로 바꾸고 **Run** 을 누릅니다.
    - 저장소의 `schema.sql` 파일에는 진짜 코드를 적지 마세요. 저장소는 공개입니다.
    - 코드를 바꾸고 싶으면 마지막 `insert ... on conflict` 문장만 새 코드로 다시 실행하면 됩니다.
+   - 2026년 5월 30일 이후 만든 Supabase 프로젝트는 새 표를 앱에 자동으로 열어주지 않아서, schema.sql 안에 그 허락(grant) 문장도 넣어 두었습니다. 예전 schema.sql 을 이미 실행했다면 `supabase/grants.sql` 만 한 번 더 실행하면 됩니다.
 5. **Project Settings → API Keys**(또는 API)에서 **Project URL** 과 **anon public 키**(또는 publishable 키)를 복사해 `config.js` 에 넣습니다.
    - **service_role / secret 키와 데이터베이스 비밀번호는 절대 넣지 마세요.**
 

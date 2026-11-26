@@ -164,6 +164,25 @@ create policy "family files delete own" on storage.objects for delete to authent
     )
   );
 
+-- 앱(Data API)이 표와 함수에 접근하도록 허락 (2026-05-30 이후 새 프로젝트는 자동으로 열리지 않음)
+
+grant usage on schema public to anon, authenticated;
+
+grant select on public.members to authenticated;
+grant select, insert, update on public.photos to authenticated;
+grant select, insert, update on public.votes to authenticated;
+grant select, insert, update on public.paintings to authenticated;
+-- family 표(가족 코드)는 일부러 허락하지 않습니다.
+
+grant execute on function public.kst_now() to authenticated;
+grant execute on function public.kst_today() to authenticated;
+grant execute on function public.my_member_id() to authenticated;
+grant execute on function public.is_member() to authenticated;
+grant execute on function public.is_painter() to authenticated;
+grant execute on function public.vote_open(date) to authenticated;
+grant execute on function public.has_photo(date, text) to authenticated;
+grant execute on function public.join_family(text, text) to authenticated;
+
 -- ▼▼▼ 가족 코드: 'CHANGE-ME-family-code' 를 영문·숫자로 된 10자 이상 아무도 모를 말로 바꾸세요 ▼▼▼
 --      (예: tori-k7m2-spring). 이 코드가 초대 링크에 들어가니 가족 외에는 알려주지 마세요.
 insert into public.family (id, join_code_hash)
