@@ -54,6 +54,13 @@ function store(fn){ try{ return fn(); }catch(e){ return null; } }
 function nick(id){ return (S.members[id] && S.members[id].nickname) || (SLOTS.find(s=>s.id===id)||{}).nickname || "가족"; }
 function isPainter(){ return !!(S.me && S.members[S.me] && S.members[S.me].is_painter); }
 function photoOf(id, ds){ return S.photos.find(p=>p.member_id===id && p.day===ds) || null; }
+/* 사람마다 다른 순서로 섞되, 같은 날에는 순서가 바뀌지 않게 (올린 순서로 누군지 짐작하지 못하게) */
+function shuffled(list, seed){
+  let x=2166136261; for (const ch of seed) x=Math.imul(x^ch.charCodeAt(0),16777619)>>>0;
+  const rnd=()=>{ x^=x<<13; x>>>=0; x^=x>>>17; x^=x<<5; x>>>=0; return x/4294967296; };
+  const a=list.slice(); for (let i=a.length-1;i>0;i--){ const j=Math.floor(rnd()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
+  return a;
+}
 function photosOn(ds){ return S.photos.filter(p=>p.day===ds).sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at))); }
 function myVote(ds){ const v=S.votes.find(v=>v.day===ds && v.voter===S.me); return v ? v.target : null; }
 function tally(ds){
@@ -228,17 +235,17 @@ function viewToday(now){
   const e=errLine(); if (e) card.append(e);
   out.push(card);
 
-  const others=photosOn(today).filter(p=>p.member_id!==S.me);
+  const others=shuffled(photosOn(today).filter(p=>p.member_id!==S.me), today+"|"+S.me);
   if (others.length){
     const g=h("div",{class:"grid"});
-    for (const p of others){
+    others.forEach((p,i)=>{
       const c=h("div",{class:"card"});
-      c.append(mine ? img(p.path,nick(p.member_id)+"의 사진") : h("div",{class:"photo msg"},"내 사진을 올리면 보여요"));
-      c.append(h("div",{class:"who"},h("b",{},nick(p.member_id))));
+      c.append(mine ? img(p.path,"가족 사진 "+(i+1)) : h("div",{class:"photo msg"},"내 사진을 올리면 보여요"));
+      c.append(h("div",{class:"who"},h("b",{class:"anon"},"🎭 누구의 사진일까요?")));
       if (mine && p.caption) c.append(h("div",{class:"cap"},p.caption));
       g.append(c);
-    }
-    out.push(h("section",{},h("h2",{},"가족의 오늘"),g));
+    });
+    out.push(h("section",{},h("div",{},h("h2",{},"가족의 오늘"),h("p",{class:"sub"},"누가 올렸는지는 내일 낮 12시 결과 발표 때 공개돼요.")),g));
   }
   out.push(howTo(true));
   return out;
@@ -248,13 +255,14 @@ function viewVote(now){
   const out=[h("section",{},h("div",{},h("h2",{},"어제의 한 컷 투표"),
     h("p",{class:"sub"},fmt(ds)+" 사진 · "+(open?"오늘 낮 12시에 마감돼요. 내 사진에는 투표할 수 없어요.":"투표가 오늘 낮 12시에 마감됐어요."))))];
   if (!open){ out.push(h("p",{class:"notice"},"결과 탭에서 1위를 확인하세요. 오늘 올린 사진의 투표는 내일 0시에 열려요.")); return out; }
-  const list=photosOn(ds);
+  const list=shuffled(photosOn(ds), ds+"|"+S.me);
   if (!list.length){ out.push(h("div",{class:"empty"},"어제 올라온 사진이 없어요.")); return out; }
+  out.push(h("p",{class:"notice"},"🎭 누가 올린 사진인지 모르게 섞어서 보여줘요. 이름은 낮 12시 결과 발표 때 공개돼요."));
   const mv=myVote(ds); const g=h("div",{class:"grid"});
   for (const p of list){
     const own=p.member_id===S.me; const chosen=mv===p.member_id;
-    g.append(h("div",{class:"card"},img(p.path,nick(p.member_id)+"의 사진"),
-      h("div",{class:"who"},h("b",{},nick(p.member_id))), p.caption?h("div",{class:"cap"},p.caption):null,
+    g.append(h("div",{class:"card"},img(p.path,own?"내 사진":"가족 사진"),
+      h("div",{class:"who"},h("b",{class:own?"":"anon"},own?"내 사진":"🎭 누구의 사진일까요?")), p.caption?h("div",{class:"cap"},p.caption):null,
       h("button",{class:"btn"+(chosen?" on":""),disabled:own||S.busy,onclick:()=>castVote(ds,p.member_id),"aria-pressed":chosen?"true":"false"},
         own?"내 사진":chosen?"💖 내가 고른 사진":"이 사진에 투표")));
   }
@@ -339,8 +347,8 @@ function viewPick(){
 function howTo(folded){
   const steps=[
     ["📸","오늘의 한 컷","하루에 딱 1장, 밤 12시까지 올려요. 마감 전엔 바꿀 수 있어요."],
-    ["🗳️","다음 날 투표","낮 12시까지 가장 마음에 드는 사진에 1표! 내 사진엔 못 찍어요."],
-    ["👑","낮 12시 1위 공개","표가 같으면 모두 1위. 꼴찌는 보여주지 않아요."],
+    ["🗳️","다음 날 익명 투표","누가 올렸는지 모르는 채로, 낮 12시까지 가장 마음에 드는 사진에 1표! 내 사진엔 못 찍어요."],
+    ["👑","낮 12시 1위 공개","이때 누구 사진인지도 함께 공개돼요. 표가 같으면 모두 1위, 꼴찌는 보여주지 않아요."],
     ["🎨","이번 주의 그림","한 주 동안 가장 많은 표를 받은 사진을 짱토리가 오일파스텔로 그려줘요."]
   ];
   const list=h("ol",{class:"steps"},steps.map(([ic,t,d])=>h("li",{},h("span",{class:"ic","aria-hidden":"true"},ic),h("div",{},h("b",{},t),h("p",{},d)))));
