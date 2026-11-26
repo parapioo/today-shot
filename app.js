@@ -1,0 +1,416 @@
+/* 오늘한컷 — 가족 사진 하루 한 장, 다음 날 정오까지 투표, 주간 1위는 오일파스텔 그림으로.
+   Supabase(익명 로그인 + 가족 코드)로 동작합니다. 모든 시간은 한국 시간 기준입니다. */
+(function(){
+"use strict";
+const TZ = "Asia/Seoul";
+const VOTE_CLOSE_HOUR = 12;
+const WD = ["일","월","화","수","목","금","토"];
+const BUCKET = "family";
+const CODE_KEY = "todayshot.joinCode";
+/* 화면에 보이는 4개 이름 자리 (schema.sql 의 members 와 같아야 함) */
+const SLOTS = [
+  {id:"jjangtori", nickname:"짱토리"},
+  {id:"ssu", nickname:"쑤"},
+  {id:"inijjang", nickname:"이니짱"},
+  {id:"torioppa", nickname:"토리오빠"}
+];
+
+const S = {
+  sb:null, me:null, members:{}, photos:[], votes:[], paintings:{},
+  urls:{}, status:"loading", busy:false, err:"", captionDraft:"", joinCode:null, renaming:false, slow:false
+};
+
+/* ---------- 시간 (항상 한국 시간) ---------- */
+function kst(d){
+  const f = new Intl.DateTimeFormat("en-CA",{timeZone:TZ,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",hourCycle:"h23"});
+  const p = {}; for (const x of f.formatToParts(d||new Date())) p[x.type]=x.value;
+  return {date:p.year+"-"+p.month+"-"+p.day, hour:(+p.hour)%24};
+}
+function addDays(ds,n){ const [y,m,d]=ds.split("-").map(Number); return new Date(Date.UTC(y,m-1,d+n)).toISOString().slice(0,10); }
+function weekday(ds){ const [y,m,d]=ds.split("-").map(Number); return new Date(Date.UTC(y,m-1,d)).getUTCDay(); }
+function weekStart(ds){ return addDays(ds, -((weekday(ds)+6)%7)); }
+function fmt(ds){ const [,m,d]=ds.split("-").map(Number); return m+"월 "+d+"일 ("+WD[weekday(ds)]+")"; }
+function fmtWeek(ws){ return fmt(ws)+" ~ "+fmt(addDays(ws,6)); }
+/* 그날 사진의 투표는 다음 날 낮 12시에 마감 */
+function dayClosed(ds, now){ const t=now.date; return t>addDays(ds,1) || (t===addDays(ds,1) && now.hour>=VOTE_CLOSE_HOUR); }
+function latestClosedDay(now){ return now.hour>=VOTE_CLOSE_HOUR ? addDays(now.date,-1) : addDays(now.date,-2); }
+
+/* ---------- 작은 DOM 도우미 (값은 항상 글자로만 넣음) ---------- */
+function h(tag, attrs, ...kids){
+  const e=document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs||{})){
+    if (v==null || v===false) continue;
+    if (k==="class") e.className=v;
+    else if (k.slice(0,2)==="on") e.addEventListener(k.slice(2),v);
+    else if (v===true) e.setAttribute(k,"");
+    else e.setAttribute(k,String(v));
+  }
+  for (const k of kids.flat()){ if(k==null||k===false) continue; e.append(k instanceof Node?k:document.createTextNode(String(k))); }
+  return e;
+}
+function store(fn){ try{ return fn(); }catch(e){ return null; } }
+
+/* ---------- 데이터 도우미 ---------- */
+function nick(id){ return (S.members[id] && S.members[id].nickname) || (SLOTS.find(s=>s.id===id)||{}).nickname || "가족"; }
+function isPainter(){ return !!(S.me && S.members[S.me] && S.members[S.me].is_painter); }
+function photoOf(id, ds){ return S.photos.find(p=>p.member_id===id && p.day===ds) || null; }
+function photosOn(ds){ return S.photos.filter(p=>p.day===ds).sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at))); }
+function myVote(ds){ const v=S.votes.find(v=>v.day===ds && v.voter===S.me); return v ? v.target : null; }
+function tally(ds){
+  const t={};
+  for (const v of S.votes){ if (v.day===ds && v.target!==v.voter && photoOf(v.target,ds)) t[v.target]=(t[v.target]||0)+1; }
+  return t;
+}
+
+/* ---------- 비공개 사진 주소 (1시간짜리 서명 링크, 55분 보관) ---------- */
+let urlQueue=new Set(), urlTimer=null;
+function urlFor(path){
+  const c=S.urls[path];
+  if (c && (c.url==="" || c.exp>Date.now())) return c.url;
+  if (!c || !c.pending){ S.urls[path]={pending:true}; urlQueue.add(path); clearTimeout(urlTimer); urlTimer=setTimeout(flushUrls,0); }
+  return null;
+}
+async function flushUrls(){
+  const paths=[...urlQueue]; urlQueue.clear(); if(!paths.length) return;
+  try{
+    const {data,error}=await S.sb.storage.from(BUCKET).createSignedUrls(paths,3600);
+    if (error) throw error;
+    const got={}; for (const r of data||[]) if (r && r.path) got[r.path]=r;
+    for (const p of paths){ const r=got[p]; S.urls[p]= r && r.signedUrl ? {url:r.signedUrl, exp:Date.now()+55*60000} : {url:"", exp:0}; }
+  }catch(e){ for (const p of paths) delete S.urls[p]; S.slow=true; }
+  render();
+}
+function img(path, alt){
+  if (!path) return h("div",{class:"photo msg"},"사진 없음");
+  const u=urlFor(path);
+  if (u===null) return h("div",{class:"photo msg"},"불러오는 중…");
+  if (u==="") return h("div",{class:"photo msg"},"사진을 불러오지 못했어요");
+  const box=h("div",{class:"photo"});
+  const i=h("img",{src:u, alt:alt||"가족 사진", loading:"lazy"});
+  i.addEventListener("error",()=>{ delete S.urls[path]; box.replaceChildren(h("div",{class:"photo msg"},"사진을 불러오지 못했어요")); });
+  box.append(i); return box;
+}
+
+/* ---------- 사진 줄이기·다시 저장 (위치 정보도 함께 지워짐) ---------- */
+async function compress(file){
+  let src;
+  try { src = await createImageBitmap(file,{imageOrientation:"from-image"}); }
+  catch(e){
+    src = await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=()=>rej(new Error("decode")); i.src=URL.createObjectURL(file); });
+  }
+  const w=src.width, hh=src.height, s=Math.min(1,1600/Math.max(w,hh));
+  const c=document.createElement("canvas"); c.width=Math.max(1,Math.round(w*s)); c.height=Math.max(1,Math.round(hh*s));
+  c.getContext("2d").drawImage(src,0,0,c.width,c.height);
+  return await new Promise((res,rej)=>c.toBlob(b=>b?res(b):rej(new Error("encode")),"image/jpeg",0.85));
+}
+function rand(){ const a=new Uint8Array(6); crypto.getRandomValues(a); return [...a].map(x=>x.toString(16).padStart(2,"0")).join(""); }
+function friendly(e, fallback){
+  const m=String((e && (e.message||e.error_description||e.error)) || "");
+  if (e && e.friendly) return e.friendly;
+  if (/row-level security|violates/i.test(m)) return "지금은 저장할 수 없는 시간이에요. 화면을 새로 고친 뒤 다시 해주세요.";
+  if (/exceed|too large|payload/i.test(m)) return "사진이 너무 커요. 다른 사진을 골라주세요.";
+  if (/fetch|network/i.test(m)) return "인터넷 연결을 확인한 뒤 다시 해주세요.";
+  return fallback;
+}
+
+/* ---------- 쓰기 ---------- */
+async function uploadToday(file){
+  if (!file || S.busy) return;
+  S.busy=true; S.err=""; render();
+  const today=kst().date; const prev=photoOf(S.me,today); let newPath=null;
+  try{
+    let blob;
+    try { blob=await compress(file); } catch(e){ throw {friendly:"이 사진은 열 수 없어요. 다른 사진을 골라주세요."}; }
+    newPath="photos/"+S.me+"/"+today+"-"+rand()+".jpg";
+    const up=await S.sb.storage.from(BUCKET).upload(newPath, blob, {contentType:"image/jpeg", upsert:false});
+    if (up.error) throw up.error;
+    const row={day:today, member_id:S.me, path:newPath, caption:(S.captionDraft||"").slice(0,40)};
+    const r=await S.sb.from("photos").upsert(row,{onConflict:"day,member_id"});
+    if (r.error){ await S.sb.storage.from(BUCKET).remove([newPath]); throw r.error; }
+    if (prev && prev.path && prev.path!==newPath) await S.sb.storage.from(BUCKET).remove([prev.path]);
+    await loadData();
+  }catch(e){ S.err=friendly(e,"사진을 올리지 못했어요. 잠시 후 다시 해주세요."); }
+  S.busy=false; render();
+}
+async function saveCaption(){
+  const today=kst().date; const p=photoOf(S.me,today); if(!p||S.busy) return;
+  S.busy=true; S.err=""; render();
+  try{
+    const r=await S.sb.from("photos").update({caption:(S.captionDraft||"").slice(0,40)}).eq("day",today).eq("member_id",S.me);
+    if (r.error) throw r.error;
+    await loadData();
+  }catch(e){ S.err=friendly(e,"한 줄 설명을 저장하지 못했어요."); }
+  S.busy=false; render();
+}
+async function castVote(ds, target){
+  if (S.busy) return; S.busy=true; S.err=""; render();
+  try{
+    const r=await S.sb.from("votes").upsert({day:ds, voter:S.me, target, updated_at:new Date().toISOString()},{onConflict:"day,voter"});
+    if (r.error) throw r.error;
+    await loadData();
+  }catch(e){ S.err=friendly(e,"투표를 저장하지 못했어요. 잠시 후 다시 해주세요."); }
+  S.busy=false; render();
+}
+async function uploadPainting(ws, file){
+  if (!file || S.busy) return; S.busy=true; S.err=""; render();
+  const old=S.paintings[ws]; let newPath=null;
+  try{
+    let blob;
+    try { blob=await compress(file); } catch(e){ throw {friendly:"이 사진은 열 수 없어요. 다른 사진을 골라주세요."}; }
+    newPath="paintings/"+ws+"-"+rand()+".jpg";
+    const up=await S.sb.storage.from(BUCKET).upload(newPath, blob, {contentType:"image/jpeg", upsert:false});
+    if (up.error) throw up.error;
+    const r=await S.sb.from("paintings").upsert({week_start:ws, path:newPath},{onConflict:"week_start"});
+    if (r.error){ await S.sb.storage.from(BUCKET).remove([newPath]); throw r.error; }
+    if (old && old.path && old.path!==newPath) await S.sb.storage.from(BUCKET).remove([old.path]);
+    await loadData();
+  }catch(e){ S.err=friendly(e,"그림을 올리지 못했어요. 잠시 후 다시 해주세요."); }
+  S.busy=false; render();
+}
+async function pickName(id){
+  if (S.busy) return;
+  const code=S.joinCode;
+  if (!code){ S.status="noinvite"; render(); return; }
+  S.busy=true; S.err=""; render();
+  try{
+    const r=await S.sb.rpc("join_family",{p_code:code, p_member:id});
+    if (r.error) throw r.error;
+    S.renaming=false;
+    await refresh();
+  }catch(e){
+    const m=String(e && e.message || "");
+    S.err = /bad_code/.test(m) ? "초대 링크의 가족 코드가 맞지 않아요. 보스님께 링크를 다시 받아주세요."
+      : /bad_member/.test(m) ? "없는 이름이에요. 화면을 새로 고쳐주세요."
+      : friendly(e,"이름을 저장하지 못했어요. 잠시 후 다시 해주세요.");
+  }
+  S.busy=false; render();
+}
+
+/* ---------- 화면들 ---------- */
+function captionInput(){
+  const cap=h("input",{type:"text",id:"caption",maxlength:"40",placeholder:"한 줄 설명 (선택)","aria-label":"한 줄 설명",value:S.captionDraft});
+  cap.addEventListener("input",e=>{S.captionDraft=e.target.value;});
+  return cap;
+}
+function fileLabel(text,id,onfile,primary){
+  const disabled = S.busy;
+  const input=h("input",{type:"file",accept:"image/*",id:id,class:"visually-hidden",disabled:disabled});
+  input.addEventListener("change",e=>{ const f=e.target.files&&e.target.files[0]; e.target.value=""; onfile(f); });
+  const lab=h("label",{for:id,class:"btn"+(primary?" primary":""),role:"button",tabindex:"0","aria-disabled":disabled?"true":null},text);
+  lab.addEventListener("keydown",e=>{ if((e.key==="Enter"||e.key===" ")&&!disabled){ e.preventDefault(); input.click(); } });
+  return h("div",{},lab,input);
+}
+function errLine(){ return S.err ? h("p",{class:"err",role:"alert"},S.err) : null; }
+
+function viewToday(now){
+  const today=now.date; const mine=photoOf(S.me,today);
+  const out=[h("section",{},h("div",{},h("h2",{},"오늘의 한 컷"),h("p",{class:"sub"},fmt(today)+" · 밤 12시까지 1장만 올릴 수 있어요")))];
+
+  const chips=h("div",{class:"chips","aria-label":"오늘 올린 가족"});
+  for (const s of SLOTS){
+    const m=S.members[s.id]; if (!m || !m.joined_at) continue;
+    const done=!!photoOf(s.id,today);
+    chips.append(h("span",{class:"chip"+(done?" done":"")},h("span",{class:"dot"}),nick(s.id)+(done?" 올림":" 아직")));
+  }
+  out.push(chips);
+
+  const card=h("div",{class:"card"});
+  if (mine){
+    card.append(img(mine.path,"내가 올린 오늘 사진"), captionInput(),
+      h("div",{class:"pair"},
+        h("button",{class:"btn",onclick:saveCaption,disabled:S.busy||(S.captionDraft===(mine.caption||""))},"설명 저장"),
+        fileLabel(S.busy?"올리는 중…":"다른 사진으로","swapFile",f=>uploadToday(f),false)));
+  } else {
+    card.append(h("p",{class:"sub"},"오늘 찍은 사진 중 제일 마음에 드는 한 장을 골라주세요. 사진 속 위치 정보는 올릴 때 지워져요."),
+      captionInput(), fileLabel(S.busy?"올리는 중…":"오늘의 사진 고르기","pickFile",f=>uploadToday(f),true));
+  }
+  const e=errLine(); if (e) card.append(e);
+  out.push(card);
+
+  const others=photosOn(today).filter(p=>p.member_id!==S.me);
+  if (others.length){
+    const g=h("div",{class:"grid"});
+    for (const p of others){
+      const c=h("div",{class:"card"});
+      c.append(mine ? img(p.path,nick(p.member_id)+"의 사진") : h("div",{class:"photo msg"},"내 사진을 올리면 보여요"));
+      c.append(h("div",{class:"who"},h("b",{},nick(p.member_id))));
+      if (mine && p.caption) c.append(h("div",{class:"cap"},p.caption));
+      g.append(c);
+    }
+    out.push(h("section",{},h("h2",{},"가족의 오늘"),g));
+  }
+  return out;
+}
+function viewVote(now){
+  const ds=addDays(now.date,-1); const open=now.hour<VOTE_CLOSE_HOUR;
+  const out=[h("section",{},h("div",{},h("h2",{},"어제의 한 컷 투표"),
+    h("p",{class:"sub"},fmt(ds)+" 사진 · "+(open?"오늘 낮 12시에 마감돼요. 내 사진에는 투표할 수 없어요.":"투표가 오늘 낮 12시에 마감됐어요."))))];
+  if (!open){ out.push(h("p",{class:"notice"},"결과 탭에서 1위를 확인하세요. 오늘 올린 사진의 투표는 내일 0시에 열려요.")); return out; }
+  const list=photosOn(ds);
+  if (!list.length){ out.push(h("div",{class:"empty"},"어제 올라온 사진이 없어요.")); return out; }
+  const mv=myVote(ds); const g=h("div",{class:"grid"});
+  for (const p of list){
+    const own=p.member_id===S.me; const chosen=mv===p.member_id;
+    g.append(h("div",{class:"card"},img(p.path,nick(p.member_id)+"의 사진"),
+      h("div",{class:"who"},h("b",{},nick(p.member_id))), p.caption?h("div",{class:"cap"},p.caption):null,
+      h("button",{class:"btn"+(chosen?" on":""),disabled:own||S.busy,onclick:()=>castVote(ds,p.member_id),"aria-pressed":chosen?"true":"false"},
+        own?"내 사진":chosen?"내가 고른 사진":"이 사진에 투표")));
+  }
+  out.push(g, h("p",{class:"sub"},mv?"마감 전까지 다른 사진으로 바꿀 수 있어요.":"하루에 1표예요."));
+  const e=errLine(); if (e) out.push(e);
+  return out;
+}
+function winnersOf(entries){ let max=0; for(const e of entries) max=Math.max(max,e.n); return max>0?entries.filter(e=>e.n===max):[]; }
+function weekEntries(ws, now){
+  const out=[];
+  for (let i=0;i<7;i++){ const ds=addDays(ws,i); if(!dayClosed(ds,now)) continue; const t=tally(ds); for(const p of photosOn(ds)) out.push({...p,n:t[p.member_id]||0}); }
+  return out;
+}
+function winnerCard(e, label){
+  return h("div",{class:"card winner"},h("span",{class:"badge"},label),img(e.path,nick(e.member_id)+"의 1위 사진"),
+    h("div",{class:"who"},h("b",{},nick(e.member_id)),h("span",{class:"votes"},e.n+"표")), e.caption?h("div",{class:"cap"},e.caption):null,
+    h("div",{class:"sub"},fmt(e.day)));
+}
+function viewResult(now){
+  const ds=latestClosedDay(now); const t=tally(ds);
+  const entries=photosOn(ds).map(p=>({...p,n:t[p.member_id]||0}));
+  const out=[h("section",{},h("div",{},h("h2",{},fmt(ds)+"의 1위"),h("p",{class:"sub"},"투표는 다음 날 낮 12시에 마감되고 바로 공개돼요.")))];
+  const w=winnersOf(entries);
+  if (!entries.length) out.push(h("div",{class:"empty"},"이날 올라온 사진이 없어요."));
+  else if (!w.length) out.push(h("div",{class:"empty"},"이날은 투표가 없었어요."));
+  else { const g=h("div",{class:w.length>1?"grid":""}); for(const e of w) g.append(winnerCard(e,w.length>1?"공동 1위":"1위")); out.push(g); }
+
+  const ws=weekStart(ds); const ww=winnersOf(weekEntries(ws,now));
+  const sec=h("section",{},h("div",{},h("h2",{},"이번 주 최다 득표"),h("p",{class:"sub"},fmtWeek(ws)+" · 일요일 사진 투표가 끝나는 월요일 낮 12시에 이번 주의 그림이 정해져요.")));
+  if (!ww.length) sec.append(h("div",{class:"empty"},"아직 표를 받은 사진이 없어요."));
+  else { const g=h("div",{class:"grid"}); for(const e of ww) g.append(winnerCard(e,"이번 주 선두")); sec.append(g); }
+  out.push(sec);
+  return out;
+}
+function viewGallery(now){
+  const weeks=new Set(S.photos.map(p=>weekStart(p.day)));
+  const closed=[...weeks].filter(ws=>dayClosed(addDays(ws,6),now)).sort().reverse();
+  const out=[h("section",{},h("div",{},h("h2",{},"이번 주의 그림"),h("p",{class:"sub"},"매주 가장 많은 표를 받은 사진을 짱토리가 A5 오일파스텔로 그려요.")))];
+  if (!closed.length){ out.push(h("div",{class:"empty"},"첫 주가 끝나면 여기에 1위 사진과 그림이 나란히 걸려요.")); return out; }
+  for (const ws of closed){
+    const ww=winnersOf(weekEntries(ws,now)); const pt=S.paintings[ws];
+    const card=h("div",{class:"card"},h("div",{class:"who"},h("b",{},fmtWeek(ws))));
+    if (!ww.length){ card.append(h("div",{class:"sub"},"이 주에는 표를 받은 사진이 없어요.")); out.push(card); continue; }
+    card.append(h("div",{class:"pair"},
+      h("div",{},h("div",{class:"lbl"},"사진 · "+[...new Set(ww.map(e=>nick(e.member_id)))].join(", ")),img(ww[0].path,"1위 사진")),
+      h("div",{},h("div",{class:"lbl"},"오일파스텔 그림"), pt&&pt.path?img(pt.path,"오일파스텔 그림"):h("div",{class:"photo msg"},"그림 준비 중"))));
+    if (ww.length>1) card.append(h("div",{class:"sub"},"공동 1위 "+ww.length+"장 · 짱토리가 한 장을 골라 그려요."));
+    if (isPainter()) card.append(fileLabel(pt?"그림 사진 바꾸기":"완성한 그림 올리기","paint-"+ws,f=>uploadPainting(ws,f),false));
+    out.push(card);
+  }
+  const e=errLine(); if (e) out.push(e);
+  return out;
+}
+function viewPick(){
+  const grid=h("div",{class:"names"});
+  for (const s of SLOTS) grid.append(h("button",{class:"btn"+(s.id===S.me?" on":""),disabled:S.busy,onclick:()=>pickName(s.id)},s.nickname));
+  return [h("section",{},
+    h("div",{},h("h2",{},"나는 누구인가요?"),h("p",{class:"sub"},"가족 안에서 쓸 이름을 골라주세요.")),
+    h("div",{class:"card"},grid,
+      h("p",{class:"sub"},"폰을 바꿨다면 원래 이름을 다시 고르면 돼요. 이미 쓰는 이름을 고르면 그 이름이 이 폰으로 옮겨와요."),
+      S.renaming?h("button",{class:"btn",onclick:()=>{S.renaming=false;S.err="";render();}},"취소"):null,
+      errLine()))];
+}
+function viewMessage(title, body){ return [h("section",{},h("h2",{},title),h("p",{class:"notice warn"},body))]; }
+
+/* ---------- 그리기 ---------- */
+let lastStamp="";
+function currentView(){ const v=(location.hash||"").slice(1); return ["today","vote","result","gallery"].includes(v)?v:"today"; }
+function render(){
+  const now=kst(); lastStamp=now.date+"|"+(now.hour>=VOTE_CLOSE_HOUR);
+  const v=currentView();
+  document.getElementById("todayLabel").textContent=fmt(now.date)+" · 우리 가족의 하루 한 장";
+  const ready = S.status==="ready" && !S.renaming;
+  const tabs=document.getElementById("tabs"); tabs.hidden=!ready;
+  for (const a of tabs.querySelectorAll("a")){ if (a.dataset.v===v) a.setAttribute("aria-current","page"); else a.removeAttribute("aria-current"); }
+
+  const meBox=document.getElementById("meBox"); meBox.replaceChildren();
+  if (S.status==="ready" && S.me){
+    meBox.append(h("div",{},"나: ",h("b",{},nick(S.me))));
+    if (S.joinCode) meBox.append(h("button",{class:"linkbtn",onclick:()=>{S.renaming=true;S.err="";render();}},"이름 바꾸기"));
+  }
+
+  const view=document.getElementById("view");
+  const active=document.activeElement && document.activeElement.id;
+  let nodes;
+  if (S.status==="loading") nodes=[h("div",{class:"empty"},"가족 사진을 불러오는 중이에요…")];
+  else if (S.status==="config") nodes=viewMessage("설정이 아직 안 됐어요","config.js 에 Supabase 주소와 공개 키를 넣어주세요.");
+  else if (S.status==="noinvite") nodes=viewMessage("초대 링크로 열어주세요","가족에게 받은 초대 링크(#join= 이 붙은 주소)로 한 번만 열면, 다음부터는 그냥 열려요.");
+  else if (S.status==="offline") nodes=viewMessage("연결이 안 돼요", S.err||"인터넷 연결을 확인한 뒤 화면을 새로 고쳐주세요.");
+  else if (S.status==="pick" || S.renaming) nodes=viewPick();
+  else nodes = v==="vote"?viewVote(now): v==="result"?viewResult(now): v==="gallery"?viewGallery(now): viewToday(now);
+  if (S.slow && S.status==="ready") nodes.unshift(h("p",{class:"notice"},"일부 사진을 불러오지 못했어요. 인터넷 연결을 확인해주세요."));
+  view.replaceChildren(h("div",{class:"wrap"},nodes));
+  if (active==="caption"){ const c=document.getElementById("caption"); if(c){ c.focus(); const l=c.value.length; try{c.setSelectionRange(l,l);}catch(e){} } }
+}
+
+/* ---------- 불러오기 ---------- */
+async function loadData(){
+  const [m,p,v,pt]=await Promise.all([
+    S.sb.from("members").select("id,nickname,is_painter,joined_at"),
+    S.sb.from("photos").select("day,member_id,path,caption,created_at"),
+    S.sb.from("votes").select("day,voter,target"),
+    S.sb.from("paintings").select("week_start,path")
+  ]);
+  const err=m.error||p.error||v.error||pt.error; if (err) throw err;
+  S.members={}; for (const r of m.data) S.members[r.id]=r;
+  S.photos=p.data; S.votes=v.data;
+  S.paintings={}; for (const r of pt.data) S.paintings[r.week_start]=r;
+  const mine=photoOf(S.me,kst().date);
+  if (document.activeElement?.id!=="caption") S.captionDraft = mine ? (mine.caption||"") : (S.captionDraft||"");
+  S.slow=false;
+}
+async function refresh(){
+  try{
+    const r=await S.sb.rpc("my_member_id"); if (r.error) throw r.error;
+    S.me=r.data||null;
+    if (!S.me){ S.status = S.joinCode ? "pick" : "noinvite"; render(); return; }
+    await loadData();
+    S.status="ready";
+  }catch(e){
+    if (S.status==="ready") S.slow=true;
+    else { S.status="offline"; S.err=friendly(e,"가족 정보를 불러오지 못했어요. 잠시 후 화면을 새로 고쳐주세요."); }
+  }
+  render();
+}
+function readJoinCode(){
+  const m=(location.hash||"").match(/^#join=([^&]+)/);
+  if (m){
+    const code=decodeURIComponent(m[1]).trim();
+    if (code) store(()=>localStorage.setItem(CODE_KEY,code));
+    history.replaceState(null,"",location.pathname+location.search+"#today");
+    if (code) return code;
+  }
+  return store(()=>localStorage.getItem(CODE_KEY)) || null;
+}
+async function boot(){
+  render();
+  const cfg=window.TODAY_SHOT_CONFIG||{};
+  if (!cfg.supabaseUrl || /YOUR-/.test(cfg.supabaseUrl+cfg.supabaseAnonKey) || !window.supabase){ S.status="config"; render(); return; }
+  S.joinCode=readJoinCode();
+  S.sb=window.supabase.createClient(cfg.supabaseUrl,cfg.supabaseAnonKey,{auth:{persistSession:true,autoRefreshToken:true,storageKey:"todayshot.auth"}});
+  try{
+    let {data}=await S.sb.auth.getSession();
+    if (!data.session){
+      if (!S.joinCode){ S.status="noinvite"; render(); return; }
+      const r=await S.sb.auth.signInAnonymously(); if (r.error) throw r.error;
+    }
+  }catch(e){ S.status="offline"; S.err=friendly(e,"로그인하지 못했어요. 잠시 후 화면을 새로 고쳐주세요."); render(); return; }
+  await refresh();
+}
+
+window.addEventListener("hashchange",()=>{ if (/^#join=/.test(location.hash)){ location.reload(); return; } S.err=""; render(); window.scrollTo(0,0); });
+document.addEventListener("visibilitychange",()=>{ if (document.visibilityState==="visible" && S.status==="ready" && !S.busy) refresh(); });
+setInterval(()=>{
+  if (document.visibilityState!=="visible") return;
+  const n=kst();
+  if (S.status==="ready" && !S.busy && document.activeElement?.id!=="caption") refresh();
+  else if (n.date+"|"+(n.hour>=VOTE_CLOSE_HOUR)!==lastStamp) render();
+},60000);
+if (document.readyState==="loading") document.addEventListener("DOMContentLoaded",boot); else boot();
+})();
