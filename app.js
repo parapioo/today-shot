@@ -129,7 +129,7 @@ async function uploadToday(file){
     const r=await S.sb.from("photos").upsert(row,{onConflict:"day,member_id"});
     if (r.error){ await S.sb.storage.from(BUCKET).remove([newPath]); throw r.error; }
     if (prev && prev.path && prev.path!==newPath) await S.sb.storage.from(BUCKET).remove([prev.path]);
-    await loadData();
+    await loadData(); confetti(70);
   }catch(e){ S.err=friendly(e,"사진을 올리지 못했어요. 잠시 후 다시 해주세요."); }
   S.busy=false; render();
 }
@@ -148,7 +148,7 @@ async function castVote(ds, target){
   try{
     const r=await S.sb.from("votes").upsert({day:ds, voter:S.me, target, updated_at:new Date().toISOString()},{onConflict:"day,voter"});
     if (r.error) throw r.error;
-    await loadData();
+    await loadData(); confetti(36);
   }catch(e){ S.err=friendly(e,"투표를 저장하지 못했어요. 잠시 후 다시 해주세요."); }
   S.busy=false; render();
 }
@@ -164,7 +164,7 @@ async function uploadPainting(ws, file){
     const r=await S.sb.from("paintings").upsert({week_start:ws, path:newPath},{onConflict:"week_start"});
     if (r.error){ await S.sb.storage.from(BUCKET).remove([newPath]); throw r.error; }
     if (old && old.path && old.path!==newPath) await S.sb.storage.from(BUCKET).remove([old.path]);
-    await loadData();
+    await loadData(); confetti(90);
   }catch(e){ S.err=friendly(e,"그림을 올리지 못했어요. 잠시 후 다시 해주세요."); }
   S.busy=false; render();
 }
@@ -255,7 +255,7 @@ function viewVote(now){
     g.append(h("div",{class:"card"},img(p.path,nick(p.member_id)+"의 사진"),
       h("div",{class:"who"},h("b",{},nick(p.member_id))), p.caption?h("div",{class:"cap"},p.caption):null,
       h("button",{class:"btn"+(chosen?" on":""),disabled:own||S.busy,onclick:()=>castVote(ds,p.member_id),"aria-pressed":chosen?"true":"false"},
-        own?"내 사진":chosen?"내가 고른 사진":"이 사진에 투표")));
+        own?"내 사진":chosen?"💖 내가 고른 사진":"이 사진에 투표")));
   }
   out.push(g, h("p",{class:"sub"},mv?"마감 전까지 다른 사진으로 바꿀 수 있어요.":"하루에 1표예요."));
   const e=errLine(); if (e) out.push(e);
@@ -267,8 +267,22 @@ function weekEntries(ws, now){
   for (let i=0;i<7;i++){ const ds=addDays(ws,i); if(!dayClosed(ds,now)) continue; const t=tally(ds); for(const p of photosOn(ds)) out.push({...p,n:t[p.member_id]||0}); }
   return out;
 }
+function sparkles(){
+  const spots=[[8,10,1],[86,6,1.3],[92,52,.9],[4,62,1.1],[60,3,.8]];
+  return h("div",{class:"sparkles","aria-hidden":"true"},spots.map(([x,y,s],i)=>h("i",{style:"left:"+x+"%;top:"+y+"%;font-size:"+s+"rem;animation-delay:"+(i*.45)+"s"},"✦")));
+}
+/* 축하 꽃가루 (움직임 줄이기 설정이면 CSS에서 숨김) */
+function confetti(n){
+  const colors=["#5B7CFA","#9B6CFF","#FF7EB6","#FFC83D","#4ED6B8"];
+  const box=h("div",{class:"confetti","aria-hidden":"true"});
+  for (let i=0;i<(n||60);i++){
+    const d=(1.2+Math.random()*1.3).toFixed(2);
+    box.append(h("i",{style:"left:"+(Math.random()*100)+"%;background:"+colors[i%colors.length]+";--x:"+((Math.random()-.5)*40)+"vw;--r:"+(360+Math.random()*720)+"deg;--d:"+d+"s;animation-delay:"+(Math.random()*.25).toFixed(2)+"s"}));
+  }
+  document.body.append(box); setTimeout(()=>box.remove(),3000);
+}
 function winnerCard(e, label){
-  return h("div",{class:"card winner"},h("span",{class:"badge"},label),img(e.path,nick(e.member_id)+"의 1위 사진"),
+  return h("div",{class:"card winner"},sparkles(),h("span",{class:"badge"},"👑 "+label),img(e.path,nick(e.member_id)+"의 1위 사진"),
     h("div",{class:"who"},h("b",{},nick(e.member_id)),h("span",{class:"votes"},e.n+"표")), e.caption?h("div",{class:"cap"},e.caption):null,
     h("div",{class:"sub"},fmt(e.day)));
 }
@@ -279,7 +293,10 @@ function viewResult(now){
   const w=winnersOf(entries);
   if (!entries.length) out.push(h("div",{class:"empty"},"이날 올라온 사진이 없어요."));
   else if (!w.length) out.push(h("div",{class:"empty"},"이날은 투표가 없었어요."));
-  else { const g=h("div",{class:w.length>1?"grid":""}); for(const e of w) g.append(winnerCard(e,w.length>1?"공동 1위":"1위")); out.push(g); }
+  else {
+    const g=h("div",{class:w.length>1?"grid":""}); for(const e of w) g.append(winnerCard(e,w.length>1?"공동 1위":"1위")); out.push(g);
+    if (S.celebrated!==ds){ S.celebrated=ds; setTimeout(()=>confetti(80),350); }
+  }
 
   const ws=weekStart(ds); const ww=winnersOf(weekEntries(ws,now));
   const sec=h("section",{},h("div",{},h("h2",{},"이번 주 최다 득표"),h("p",{class:"sub"},fmtWeek(ws)+" · 일요일 사진 투표가 끝나는 월요일 낮 12시에 이번 주의 그림이 정해져요.")));
