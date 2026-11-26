@@ -298,7 +298,7 @@ function winnerCard(e, label){
 function viewResult(now){
   const ds=latestClosedDay(now); const t=tally(ds);
   const entries=photosOn(ds).map(p=>({...p,n:t[p.member_id]||0}));
-  const out=[h("section",{},h("div",{},h("h2",{},fmt(ds)+"의 1위"),h("p",{class:"sub"},"투표는 다음 날 낮 12시에 마감되고 바로 공개돼요.")))];
+  const out=[h("section",{},h("div",{},h("h2",{},fmt(ds)+"의 1위"),h("p",{class:"sub"},"투표는 다음 날 낮 12시에 마감되고 바로 순위가 공개돼요.")))];
   const w=winnersOf(entries);
   if (!entries.length) out.push(h("div",{class:"empty"},"이날 올라온 사진이 없어요."));
   else if (!w.length) out.push(h("div",{class:"empty"},"이날은 투표가 없었어요."));
@@ -307,12 +307,36 @@ function viewResult(now){
     if (S.celebrated!==ds){ S.celebrated=ds; setTimeout(()=>confetti(80),350); }
   }
 
-  const ws=weekStart(ds); const ww=winnersOf(weekEntries(ws,now));
+  if (entries.length) out.push(rankingCard("🏅 "+fmt(ds)+" 전체 순위", entries.map(e=>({id:e.member_id,n:e.n,path:e.path,caption:e.caption})), true));
+
+  const ws=weekStart(ds); const we=weekEntries(ws,now); const ww=winnersOf(we);
+  /* 이번 주 누적: 사람별 받은 표 합계 */
+  const sum={}, cnt={}; for (const e of we){ sum[e.member_id]=(sum[e.member_id]||0)+e.n; cnt[e.member_id]=(cnt[e.member_id]||0)+1; }
+  const weekRows=Object.keys(sum).map(id=>({id,n:sum[id],note:"사진 "+cnt[id]+"장"}));
   const sec=h("section",{},h("div",{},h("h2",{},"이번 주 최다 득표"),h("p",{class:"sub"},fmtWeek(ws)+" · 일요일 사진 투표가 끝나는 월요일 낮 12시에 이번 주의 그림이 정해져요.")));
   if (!ww.length) sec.append(h("div",{class:"empty"},"아직 표를 받은 사진이 없어요."));
   else { const g=h("div",{class:"grid"}); for(const e of ww) g.append(winnerCard(e,"이번 주 선두")); sec.append(g); }
+  if (weekRows.length) sec.append(rankingCard("📊 이번 주 누적 득표 순위", weekRows, false));
   out.push(sec);
   return out;
+}
+/* 4명 모두의 순위. 표가 같으면 같은 순위(1,1,3). 사진을 안 올린 가족은 맨 아래 */
+function rankingCard(title, rows, withPhoto){
+  rows=rows.slice().sort((a,b)=>b.n-a.n || nick(a.id).localeCompare(nick(b.id),"ko"));
+  let rank=0, prev=null;
+  rows.forEach((r,i)=>{ if (r.n!==prev){ rank=i+1; prev=r.n; } r.rank=rank; });
+  const have=new Set(rows.map(r=>r.id));
+  const missing=SLOTS.filter(s=>!have.has(s.id) && S.members[s.id] && S.members[s.id].joined_at);
+  const medal=r=>r.n>0 && r.rank===1?"🥇":r.n>0 && r.rank===2?"🥈":r.n>0 && r.rank===3?"🥉":r.rank+"위";
+  const list=h("ol",{class:"rank"},
+    rows.map(r=>h("li",{class:r.n>0&&r.rank===1?"top":""},
+      h("span",{class:"pos"},medal(r)),
+      withPhoto&&r.path?h("span",{class:"thumb"},img(r.path,nick(r.id)+"의 사진")):null,
+      h("span",{class:"nm"},h("b",{},nick(r.id)), r.caption?h("small",{},r.caption):r.note?h("small",{},r.note):null),
+      h("span",{class:"n"},r.n+"표"))),
+    missing.map(m=>h("li",{class:"none"},h("span",{class:"pos"},"–"),withPhoto?h("span",{class:"thumb empty-thumb"}):null,
+      h("span",{class:"nm"},h("b",{},m.nickname),h("small",{},withPhoto?"이날은 사진을 안 올렸어요":"이번 주 사진 없음")),h("span",{class:"n"},""))));
+  return h("div",{class:"card"},h("h3",{class:"rank-title"},title),list);
 }
 function viewGallery(now){
   const weeks=new Set(S.photos.map(p=>weekStart(p.day)));
@@ -348,7 +372,7 @@ function howTo(folded){
   const steps=[
     ["📸","오늘의 한 컷","하루에 딱 1장, 밤 12시까지 올려요. 마감 전엔 바꿀 수 있어요."],
     ["🗳️","다음 날 익명 투표","누가 올렸는지 모르는 채로, 낮 12시까지 가장 마음에 드는 사진에 1표! 내 사진엔 못 찍어요."],
-    ["👑","낮 12시 1위 공개","이때 누구 사진인지도 함께 공개돼요. 표가 같으면 모두 1위, 꼴찌는 보여주지 않아요."],
+    ["👑","낮 12시 순위 공개","누구 사진인지와 4명의 순위가 함께 공개돼요. 표가 같으면 같은 순위예요."],
     ["🎨","이번 주의 그림","한 주 동안 가장 많은 표를 받은 사진을 짱토리가 오일파스텔로 그려줘요."]
   ];
   const list=h("ol",{class:"steps"},steps.map(([ic,t,d])=>h("li",{},h("span",{class:"ic","aria-hidden":"true"},ic),h("div",{},h("b",{},t),h("p",{},d)))));
