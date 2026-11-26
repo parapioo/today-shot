@@ -240,6 +240,7 @@ function viewToday(now){
     }
     out.push(h("section",{},h("h2",{},"가족의 오늘"),g));
   }
+  out.push(howTo(true));
   return out;
 }
 function viewVote(now){
@@ -335,17 +336,21 @@ function viewPick(){
     howTo())];
 }
 /* 이용 방법과 투표 규칙 */
-function howTo(){
+function howTo(folded){
   const steps=[
     ["📸","오늘의 한 컷","하루에 딱 1장, 밤 12시까지 올려요. 마감 전엔 바꿀 수 있어요."],
     ["🗳️","다음 날 투표","낮 12시까지 가장 마음에 드는 사진에 1표! 내 사진엔 못 찍어요."],
     ["👑","낮 12시 1위 공개","표가 같으면 모두 1위. 꼴찌는 보여주지 않아요."],
     ["🎨","이번 주의 그림","한 주 동안 가장 많은 표를 받은 사진을 짱토리가 오일파스텔로 그려줘요."]
   ];
-  return h("div",{class:"card howto"},
-    h("h3",{},"오늘한컷은 이렇게 해요"),
-    h("ol",{class:"steps"},steps.map(([ic,t,d])=>h("li",{},h("span",{class:"ic","aria-hidden":"true"},ic),h("div",{},h("b",{},t),h("p",{},d))))),
-    h("p",{class:"sub"},"내 사진을 올려야 가족의 오늘 사진이 보여요. 모든 시간은 한국 시간이에요."));
+  const list=h("ol",{class:"steps"},steps.map(([ic,t,d])=>h("li",{},h("span",{class:"ic","aria-hidden":"true"},ic),h("div",{},h("b",{},t),h("p",{},d)))));
+  const foot=h("p",{class:"sub"},"내 사진을 올려야 가족의 오늘 사진이 보여요. 모든 시간은 한국 시간이에요.");
+  if (!folded) return h("div",{class:"card howto"},h("h3",{},"오늘한컷은 이렇게 해요"),list,foot);
+  /* 오늘 탭: 접었다 펼 수 있게. 처음(내 사진이 하나도 없을 때)은 펼친 채로 */
+  const open = S.howOpen!=null ? S.howOpen : !S.photos.some(p=>p.member_id===S.me);
+  const d=h("details",{class:"card howto",open:open},h("summary",{},h("span",{},"📖 이용 방법과 투표 규칙")),list,foot);
+  d.addEventListener("toggle",()=>{ S.howOpen=d.open; });
+  return d;
 }
 function viewMessage(title, body){ return [h("section",{},h("h2",{},title),h("p",{class:"notice warn"},body))]; }
 
