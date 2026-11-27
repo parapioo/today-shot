@@ -76,6 +76,7 @@ section{display:flex;flex-direction:column;gap:12px;animation:rise .45s cubic-be
 .chip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);font-size:.85rem;background:var(--card);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 .chip.done{border-color:transparent;background:var(--grad);color:#fff;font-weight:600;box-shadow:0 6px 16px -8px rgba(120,90,255,.8)}
 .chip .dot{width:8px;height:8px;border-radius:50%;background:var(--line)}
+.chip.pending{border-style:dashed;color:var(--muted);background:transparent}
 .chip.done .dot{background:#fff;box-shadow:0 0 0 3px rgba(255,255,255,.35)}
 .photo{position:relative;border-radius:16px;overflow:hidden;background:var(--accent-soft);aspect-ratio:4/3;max-width:100%}
 .photo img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .6s cubic-bezier(.2,.8,.2,1)}

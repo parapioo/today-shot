@@ -216,7 +216,8 @@ function viewToday(now){
 
   const chips=h("div",{class:"chips","aria-label":"오늘 올린 가족"});
   for (const s of SLOTS){
-    const m=S.members[s.id]; if (!m || !m.joined_at) continue;
+    const m=S.members[s.id];
+    if (!m || !m.joined_at){ chips.append(h("span",{class:"chip pending",title:"아직 초대 링크로 들어오지 않았어요"},h("span",{class:"dot"}),nick(s.id)+" 초대 전")); continue; }
     const done=!!photoOf(s.id,today);
     chips.append(h("span",{class:"chip"+(done?" done":"")},h("span",{class:"dot"}),nick(s.id)+(done?" 올림":" 아직")));
   }
