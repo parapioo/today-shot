@@ -10,6 +10,10 @@
 <meta name="robots" content="noindex">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="오늘한컷">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -163,6 +167,7 @@ nav.tabs a[aria-current="page"]{background:var(--grad);color:#fff;box-shadow:0 8
 details.past summary{cursor:pointer;list-style:none;display:flex;flex-direction:column;gap:2px}
 details.past summary::-webkit-details-marker{display:none}
 details.past[open] summary{margin-bottom:10px}
+.inapp{background:linear-gradient(var(--card-solid),var(--card-solid)) padding-box,var(--gold-grad) border-box;border:2px solid transparent}
 .howto summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;font-family:var(--display);font-size:1.3rem;font-weight:700}
 .howto summary::-webkit-details-marker{display:none}
 .howto summary::after{content:"펼치기";font-family:var(--body);font-size:.8rem;font-weight:500;color:var(--accent)}

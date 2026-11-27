@@ -249,6 +249,7 @@ function viewToday(now){
     out.push(h("section",{},h("div",{},h("h2",{},"가족의 오늘"),h("p",{class:"sub"},"누가 올렸는지는 내일 낮 12시 결과 발표 때 공개돼요.")),g));
   }
   out.push(howTo(true));
+  const hh=homeHelp(); if (hh) out.push(hh);
   return out;
 }
 function viewVote(now){
@@ -387,6 +388,52 @@ function howTo(folded){
   return d;
 }
 function viewMessage(title, body){ return [h("section",{},h("h2",{},title),h("p",{class:"notice warn"},body))]; }
+
+/* ---------- 홈 화면에 추가 도우미 ---------- */
+const UA=navigator.userAgent||"";
+const ENV={
+  kakao:/KAKAOTALK/i.test(UA),
+  inApp:/KAKAOTALK|NAVER\(inapp|Instagram|FBAN|FBAV|Line\/|DaumApps|everytimeApp/i.test(UA),
+  ios:/iPhone|iPad|iPod/i.test(UA) || (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1),
+  samsung:/SamsungBrowser/i.test(UA),
+  standalone:(window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone===true
+};
+if (ENV.ios){ const l=document.querySelector('link[rel="manifest"]'); if (l) l.remove(); }
+let installEvt=null;
+window.addEventListener("beforeinstallprompt",e=>{ e.preventDefault(); installEvt=e; render(); });
+window.addEventListener("appinstalled",()=>{ installEvt=null; store(()=>localStorage.setItem("todayshot.homeDone","1")); render(); });
+function externalUrl(){ return homeUrl()+"#today"; }
+function openExternal(){
+  const url=externalUrl();
+  if (ENV.kakao){ location.href="kakaotalk://web/openExternal?url="+encodeURIComponent(url); return; }
+  if (/Android/i.test(UA)){ location.href="intent://"+url.replace(/^https?:\/\//,"")+"#Intent;scheme=https;package=com.android.chrome;end"; return; }
+}
+/* 카카오톡 같은 앱 안의 브라우저에서 열렸을 때 맨 위에 보이는 안내 */
+function inAppBanner(){
+  if (!ENV.inApp || ENV.standalone) return null;
+  const app=ENV.kakao?"카카오톡":"앱";
+  const browser=ENV.ios?"사파리":"크롬";
+  return h("div",{class:"card inapp"},
+    h("b",{},"📲 "+app+" 안에서 열려 있어요"),
+    h("p",{class:"sub"},"홈 화면에 오늘한컷 아이콘을 만들려면 "+browser+"에서 열어야 해요. 아래 버튼을 누르면 "+browser+"에서 바로 이어서 열려요."),
+    (ENV.kakao || /Android/i.test(UA)) ? h("button",{class:"btn primary",onclick:openExternal},(ENV.ios?"사파리로":"크롬으로")+" 열기") : null,
+    h("p",{class:"sub"}, ENV.kakao ? "버튼이 안 되면: 오른쪽 아래(아이폰은 오른쪽 아래 ⋯ 또는 공유) 메뉴 → \"다른 브라우저로 열기\"" : "오른쪽 위 메뉴 → \"다른 브라우저로 열기\"를 눌러주세요."));
+}
+/* 오늘 탭 아래: 홈 화면에 추가하는 방법 */
+function homeHelp(){
+  if (ENV.inApp || ENV.standalone) return null;
+  const done=store(()=>localStorage.getItem("todayshot.homeDone"))==="1";
+  const steps = ENV.ios ? [["1","사파리 아래쪽의 공유 버튼 □↑ 을 눌러요 (안 보이면 ⋯ 버튼을 먼저 눌러요)"],["2","목록을 조금 내려 \"홈 화면에 추가\"를 눌러요"],["3","오른쪽 위 \"추가\"를 누르면 끝!"]]
+    : ENV.samsung ? [["1","아래쪽 ≡ 메뉴를 눌러요"],["2","\"현재 페이지 추가\" → \"홈 화면\"을 눌러요"],["3","\"추가\"를 누르면 끝!"]]
+    : [["1","오른쪽 위 ⋮ 메뉴를 눌러요"],["2","\"홈 화면에 추가\" 또는 \"앱 설치\"를 눌러요"],["3","\"추가\"(또는 \"설치\")를 누르면 끝!"]];
+  const d=h("details",{class:"card howto",open:!done},
+    h("summary",{},h("span",{},"📲 홈 화면에 아이콘 만들기")),
+    installEvt ? h("button",{class:"btn primary",onclick:async()=>{ try{ installEvt.prompt(); await installEvt.userChoice; }catch(e){} installEvt=null; render(); }},"📲 바로 설치하기") : null,
+    h("ol",{class:"steps"},steps.map(([n,t])=>h("li",{},h("span",{class:"ic","aria-hidden":"true"},n),h("div",{},h("p",{},t))))),
+    h("p",{class:"sub"},"다음부터는 홈 화면의 오늘한컷 아이콘을 누르면 앱처럼 바로 열려요."),
+    done?null:h("button",{class:"btn",onclick:()=>{ store(()=>localStorage.setItem("todayshot.homeDone","1")); render(); }},"다 했어요"));
+  return d;
+}
 
 /* ---------- 오늘톡: 하루 한 명이 묻고, 모두 한 줄로 답하기 ---------- */
 const ASK_ORDER=["jjangtori","ssu","inijjang","torioppa"];   /* talk.sql 의 talk_asker 와 같은 순서 */
@@ -560,6 +607,7 @@ function render(){
   else if (S.status==="pick" || S.renaming) nodes=viewPick();
   else if (v==="talk") nodes=viewTalk(now);
   else { nodes = v==="vote"?viewVote(now): v==="result"?viewResult(now): v==="gallery"?viewGallery(now): viewToday(now); nodes.unshift(shotTabs(v)); }
+  const banner=(S.status==="ready"||S.status==="pick")?inAppBanner():null; if (banner) nodes.unshift(banner);
   if (S.slow && S.status==="ready") nodes.unshift(h("p",{class:"notice"},"일부 사진을 불러오지 못했어요. 인터넷 연결을 확인해주세요."));
   view.replaceChildren(h("div",{class:"wrap"},nodes));
   if (["caption","talkQ","talkA"].includes(active)){ const c=document.getElementById(active); if(c){ c.focus(); const l=c.value.length; try{c.setSelectionRange(l,l);}catch(e){} } }
@@ -585,7 +633,13 @@ async function refresh(){
   try{
     const r=await S.sb.rpc("my_member_id"); if (r.error) throw r.error;
     S.me=r.data||null;
+    if (!S.me && S.joinCode && S.autoMember && !S.autoTried){
+      S.autoTried=true;
+      const j=await S.sb.rpc("join_family",{p_code:S.joinCode, p_member:S.autoMember});
+      if (!j.error) S.me=j.data||S.autoMember;
+    }
     if (!S.me){ S.status = S.joinCode ? "pick" : "noinvite"; render(); return; }
+    keepJoinInUrl();
     await loadData();
     await loadTalk();
     S.status="ready";
@@ -595,15 +649,27 @@ async function refresh(){
   }
   render();
 }
+/* 가족 코드는 #join=코드 (카톡 초대 링크) 또는 ?join=코드&m=이름 (홈 화면 아이콘·다른 브라우저로 열기) 로 들어옴 */
 function readJoinCode(){
+  const qs=new URLSearchParams(location.search);
+  const m2=qs.get("m"); if (m2 && SLOTS.some(x=>x.id===m2)) S.autoMember=m2;
   const m=(location.hash||"").match(/^#join=([^&]+)/);
-  if (m){
-    const code=decodeURIComponent(m[1]).trim();
-    if (code) store(()=>localStorage.setItem(CODE_KEY,code));
-    history.replaceState(null,"",location.pathname+location.search+"#today");
-    if (code) return code;
-  }
+  let code=null;
+  if (m){ code=decodeURIComponent(m[1]).trim(); history.replaceState(null,"",location.pathname+location.search+"#today"); }
+  if (!code && qs.get("join")) code=qs.get("join").trim();
+  if (code){ store(()=>localStorage.setItem(CODE_KEY,code)); return code; }
   return store(()=>localStorage.getItem(CODE_KEY)) || null;
+}
+/* 아이폰은 홈 화면 앱이 사파리와 저장 공간을 따로 써서, 주소에 코드와 내 이름을 남겨 두면
+   홈 화면 아이콘으로 처음 열 때 이름을 다시 고르지 않아도 자동으로 들어옴 */
+function homeUrl(){
+  const q=new URLSearchParams(); if (S.joinCode) q.set("join",S.joinCode); if (S.me) q.set("m",S.me);
+  return location.origin+location.pathname+(q.toString()?"?"+q.toString():"");
+}
+function keepJoinInUrl(){
+  if (!S.joinCode || !S.me) return;
+  const want=homeUrl();
+  if (location.origin+location.pathname+location.search!==want) history.replaceState(null,"",want+(location.hash||"#today"));
 }
 async function boot(){
   render();
