@@ -17,7 +17,7 @@ const SLOTS = [
 
 const S = {
   sb:null, me:null, members:{}, photos:[], votes:[], paintings:{},
-  urls:{}, status:"loading", busy:false, err:"", errDetail:"", captionDraft:"", joinCode:null, renaming:false, slow:false
+  urls:{}, talk:{q:[],a:[],count:0,err:"",loaded:false}, qDraft:"", aDraft:"", sugShift:0, editQ:false, status:"loading", busy:false, err:"", errDetail:"", captionDraft:"", joinCode:null, renaming:false, slow:false
 };
 
 /* ---------- 시간 (항상 한국 시간) ---------- */
@@ -373,7 +373,8 @@ function howTo(folded){
     ["📸","오늘의 한 컷","하루에 딱 1장, 밤 12시까지 올려요. 마감 전엔 바꿀 수 있어요."],
     ["🗳️","다음 날 익명 투표","누가 올렸는지 모르는 채로, 낮 12시까지 가장 마음에 드는 사진에 1표! 내 사진엔 못 찍어요."],
     ["👑","낮 12시 순위 공개","누구 사진인지와 4명의 순위가 함께 공개돼요. 표가 같으면 같은 순위예요."],
-    ["🎨","이번 주의 그림","한 주 동안 가장 많은 표를 받은 사진을 짱토리가 오일파스텔로 그려줘요."]
+    ["🎨","이번 주의 그림","한 주 동안 가장 많은 표를 받은 사진을 짱토리가 오일파스텔로 그려줘요."],
+    ["💬","오늘톡","하루씩 돌아가며 한 명이 질문하고, 나머지는 한 줄로 답해요. 내가 답해야 가족 답이 보여요."]
   ];
   const list=h("ol",{class:"steps"},steps.map(([ic,t,d])=>h("li",{},h("span",{class:"ic","aria-hidden":"true"},ic),h("div",{},h("b",{},t),h("p",{},d)))));
   const foot=h("p",{class:"sub"},"내 사진을 올려야 가족의 오늘 사진이 보여요. 모든 시간은 한국 시간이에요.");
@@ -386,16 +387,161 @@ function howTo(folded){
 }
 function viewMessage(title, body){ return [h("section",{},h("h2",{},title),h("p",{class:"notice warn"},body))]; }
 
+/* ---------- 오늘톡: 하루 한 명이 묻고, 모두 한 줄로 답하기 ---------- */
+const ASK_ORDER=["jjangtori","ssu","inijjang","torioppa"];   /* talk.sql 의 talk_asker 와 같은 순서 */
+const ASK_ANCHOR="2026-11-27";                                  /* 이날이 짱토리 차례 */
+function askerOf(ds){ const [y1,m1,d1]=ASK_ANCHOR.split("-").map(Number), [y,m,d]=ds.split("-").map(Number);
+  const diff=Math.round((Date.UTC(y,m-1,d)-Date.UTC(y1,m1-1,d1))/86400000); return ASK_ORDER[((diff%4)+4)%4]; }
+const QUESTION_BANK=[
+  "오늘 제일 웃겼던 순간은?","오늘 먹은 것 중 최고의 한 입은?","오늘 나를 칭찬한다면 한마디로?","요즘 자꾸 생각나는 노래는?",
+  "오늘 하늘 색깔을 한 단어로 표현하면?","지금 당장 순간이동 할 수 있다면 어디로?","오늘 들은 말 중 기억에 남는 말은?","이번 주말에 꼭 하고 싶은 것 하나는?",
+  "오늘 나를 힘들게 한 것 하나만 털어놓기","가족에게 고마웠던 순간 하나는?","어릴 때 가장 좋아했던 간식은?","오늘의 나를 동물로 표현하면?",
+  "요즘 빠져 있는 것 하나는?","10년 뒤 우리 가족은 뭐 하고 있을까?","오늘 길에서 본 것 중 신기했던 것은?","지금 제일 먹고 싶은 음식은?",
+  "올해 가장 잘한 일 하나는?","오늘 하루 점수를 매긴다면 몇 점? 이유는?","가족 여행 가고 싶은 곳 한 곳은?","요즘 나만 아는 작은 행복은?",
+  "오늘 가장 많이 쓴 앱은?","내일의 나에게 한마디","최근에 새로 배운 것 하나는?","오늘 들었던 생각 중 엉뚱한 것 하나는?",
+  "가족 중 한 명에게 몰래 해주고 싶은 것은?","오늘 아침 기분을 날씨로 말하면?","내가 만든 요리 중 최고는?","요즘 고민 하나, 한 줄로!",
+  "오늘 찍은 사진 중 아쉽게 탈락한 장면은?","우리 가족 별명을 새로 지어준다면?"
+];
+function suggestions(ds){
+  let x=0; for (const ch of ds) x=(x*31+ch.charCodeAt(0))>>>0;
+  const start=(x+S.sugShift*3)%QUESTION_BANK.length;
+  return [0,1,2].map(i=>QUESTION_BANK[(start+i)%QUESTION_BANK.length]);
+}
+function talkQ(ds){ return S.talk.q.find(q=>q.day===ds)||null; }
+function talkAnswers(ds){ return S.talk.a.filter(a=>a.day===ds).sort((a,b)=>String(a.updated_at).localeCompare(String(b.updated_at))); }
+async function loadTalk(){
+  try{
+    const today=kst().date;
+    const [q,a,c]=await Promise.all([
+      S.sb.from("talk_questions").select("day,asker,question").order("day",{ascending:false}).limit(60),
+      S.sb.from("talk_answers").select("day,member_id,answer,updated_at"),
+      S.sb.rpc("talk_answer_count",{d:today})
+    ]);
+    const err=q.error||a.error||c.error; if (err) throw err;
+    S.talk={q:q.data, a:a.data, count:c.data||0, err:"", loaded:true};
+    const mine=S.talk.a.find(x=>x.day===today && x.member_id===S.me);
+    if (document.activeElement?.id!=="talkA") S.aDraft = mine ? mine.answer : (S.aDraft||"");
+  }catch(e){
+    const m=String((e&&(e.code||""))+" "+(e&&e.message||""));
+    S.talk.err = /PGRST20[25]|42P01|does not exist|Could not find/i.test(m) ? "setup" : "load";
+    S.talk.errDetail=detail(e);
+  }
+}
+async function askQuestion(text){
+  text=(text||"").trim().slice(0,80); if (!text || S.busy) return;
+  S.busy=true; S.err=""; render();
+  try{
+    const today=kst().date;
+    const r=await S.sb.from("talk_questions").upsert({day:today, asker:S.me, question:text},{onConflict:"day"});
+    if (r.error) throw r.error;
+    S.qDraft=""; S.editQ=false; await loadTalk(); confetti(30);
+  }catch(e){ S.err=friendly(e,"질문을 올리지 못했어요. 오늘 질문 담당인지 확인해주세요."); }
+  S.busy=false; render();
+}
+async function sendAnswer(){
+  const text=(S.aDraft||"").trim().slice(0,100); if (!text || S.busy) return;
+  S.busy=true; S.err=""; render();
+  try{
+    const r=await S.sb.from("talk_answers").upsert({day:kst().date, member_id:S.me, answer:text, updated_at:new Date().toISOString()},{onConflict:"day,member_id"});
+    if (r.error) throw r.error;
+    const first=!S.talk.a.some(x=>x.day===kst().date && x.member_id===S.me);
+    await loadTalk(); if (first) confetti(30);
+  }catch(e){ S.err=friendly(e,"답을 저장하지 못했어요. 잠시 후 다시 해주세요."); }
+  S.busy=false; render();
+}
+function put(el,...kids){ for (const k of kids.flat()) if (k!=null && k!==false) el.append(k); return el; }
+function bubble(a){
+  return h("li",{class:"bubble"+(a.member_id===S.me?" mine":"")},h("b",{},nick(a.member_id)),h("span",{},a.answer));
+}
+function viewTalk(now){
+  const today=now.date; const asker=askerOf(today); const q=talkQ(today);
+  const out=[h("section",{},h("div",{},h("h2",{},"💬 오늘톡"),h("p",{class:"sub"},fmt(today)+" · 하루 한 명이 묻고, 모두 한 줄로 답해요")))];
+  if (S.talk.err==="setup"){ out.push(h("p",{class:"notice warn"},"오늘톡을 쓰려면 짱토리가 Supabase에서 talk.sql 을 한 번 실행해야 해요.")); return out; }
+  if (S.talk.err==="load" && !S.talk.loaded){ out.push(h("p",{class:"notice warn"},"오늘톡을 불러오지 못했어요. 잠시 후 다시 열어주세요."), S.talk.errDetail?h("p",{class:"sub"},"자세한 내용: "+S.talk.errDetail):null); return out; }
+
+  /* 질문 담당 순서 */
+  const strip=h("div",{class:"chips","aria-label":"질문 담당 순서"});
+  for (let i=0;i<4;i++){ const d=addDays(today,i); const who=askerOf(d);
+    strip.append(h("span",{class:"chip"+(i===0?" done":"")},(i===0?"오늘 🎤 ":i===1?"내일 ":fmt(d).replace(/^\d+월 /,"")+" ")+nick(who))); }
+  out.push(strip);
+
+  /* 질문 카드 */
+  const canAsk = asker===S.me || (!q && now.hour>=12);
+  const qc=h("div",{class:"card talkq"});
+  if (q && !(S.editQ && q.asker===S.me)){
+    put(qc,h("p",{class:"qtext"},"“"+q.question+"”"), h("div",{class:"who"},h("span",{class:"sub"},"— "+nick(q.asker)+"의 질문"),
+      q.asker===S.me?h("button",{class:"linkbtn",onclick:()=>{S.editQ=true;S.qDraft=q.question;render();}},"질문 바꾸기"):null));
+  } else if (canAsk){
+    qc.append(h("b",{},asker===S.me?"🎤 오늘은 내가 질문 담당이에요!":"🎤 낮 12시가 지나서 누구나 질문을 올릴 수 있어요"));
+    const inp=h("input",{type:"text",id:"talkQ",maxlength:"80",placeholder:"가족에게 물어볼 질문 (80자까지)","aria-label":"오늘의 질문",value:S.qDraft});
+    const qbtn=h("button",{class:"btn primary",disabled:S.busy||!S.qDraft.trim(),onclick:()=>askQuestion(S.qDraft)},S.busy?"올리는 중…":"질문 올리기");
+    inp.addEventListener("input",e=>{S.qDraft=e.target.value; qbtn.disabled=S.busy||!S.qDraft.trim();});
+    const sug=h("div",{class:"sugs"},suggestions(today).map(t=>h("button",{class:"sug",onclick:()=>{S.qDraft=t;render();}},t)),
+      h("button",{class:"sug more",onclick:()=>{S.sugShift++;render();}},"🔄 다른 추천"));
+    put(qc,h("p",{class:"sub"},"추천 질문을 눌러 고르거나 직접 써도 돼요."), sug, inp, qbtn,
+      S.editQ?h("button",{class:"btn",onclick:()=>{S.editQ=false;render();}},"취소"):null);
+  } else {
+    qc.append(h("p",{class:"qtext wait"},"🎤 "+nick(asker)+"님이 오늘의 질문을 고르는 중이에요"),
+      h("p",{class:"sub"},"낮 12시까지 질문이 없으면 누구나 추천 질문을 올릴 수 있어요."));
+  }
+  const e1=errLine(); if (e1) qc.append(e1);
+  out.push(qc);
+
+  /* 답 */
+  if (q){
+    const answers=talkAnswers(today); const mine=answers.find(a=>a.member_id===S.me);
+    const unlocked = !!mine || q.asker===S.me;
+    const ac=h("div",{class:"card"});
+    const inp=h("input",{type:"text",id:"talkA",maxlength:"100",placeholder:"한 줄로 답하기 (100자까지)","aria-label":"내 답",value:S.aDraft});
+    const off=()=>S.busy||!S.aDraft.trim()||!!(mine&&S.aDraft.trim()===mine.answer);
+    const abtn=h("button",{class:"btn"+(mine?"":" primary"),disabled:off(),onclick:sendAnswer},mine?"답 고치기":"답하기");
+    inp.addEventListener("input",e=>{S.aDraft=e.target.value; abtn.disabled=off();});
+    inp.addEventListener("keydown",e=>{ if(e.key==="Enter"&&!e.isComposing&&!off()) sendAnswer(); });
+    put(ac,h("b",{},mine?"✍️ 내 답 (밤 12시까지 고칠 수 있어요)":"✍️ 내 답"), inp, abtn);
+    out.push(ac);
+    const others=answers.filter(a=>a.member_id!==S.me);
+    const lc=h("div",{class:"card"},h("b",{},"💬 가족의 답"));
+    if (!unlocked){
+      const n=Math.max(0,(S.talk.count||0));
+      lc.append(h("div",{class:"locked"},h("span",{class:"lock"},"🔒"),h("span",{},n?("답 "+n+"개가 기다리고 있어요. 내가 답하면 보여요!"):"아직 아무도 답하지 않았어요. 첫 번째로 답해보세요!")));
+    } else if (!others.length){
+      lc.append(h("p",{class:"sub"},"아직 다른 가족의 답이 없어요."));
+    } else lc.append(h("ul",{class:"bubbles"},others.map(bubble)));
+    out.push(lc);
+  }
+
+  /* 지난 오늘톡 */
+  const past=S.talk.q.filter(x=>x.day<today).slice(0,30);
+  if (past.length){
+    const sec=h("section",{},h("h2",{},"📚 지난 오늘톡"));
+    for (const pq of past){
+      const ans=talkAnswers(pq.day);
+      sec.append(h("details",{class:"card past"},
+        h("summary",{},h("span",{class:"sub"},fmt(pq.day)+" · "+nick(pq.asker)),h("b",{},pq.question)),
+        ans.length?h("ul",{class:"bubbles"},ans.map(bubble)):h("p",{class:"sub"},"답이 없었어요.")));
+    }
+    out.push(sec);
+  }
+  return out;
+}
+
 /* ---------- 그리기 ---------- */
 let lastStamp="";
-function currentView(){ const v=(location.hash||"").slice(1); return ["today","vote","result","gallery"].includes(v)?v:"today"; }
+const SHOT_VIEWS=["today","vote","result","gallery"];
+function currentView(){ const v=(location.hash||"").slice(1); return [...SHOT_VIEWS,"talk"].includes(v)?v:"today"; }
+/* 한컷 안의 작은 탭 (오늘·투표·결과·그림) */
+function shotTabs(v){
+  const items=[["today","📸 오늘"],["vote","🗳️ 투표"],["result","🏅 결과"],["gallery","🎨 그림"]];
+  return h("nav",{class:"seg","aria-label":"한컷 메뉴"},items.map(([k,t])=>h("a",{href:"#"+k,"aria-current":k===v?"page":null},t)));
+}
 function render(){
   const now=kst(); lastStamp=now.date+"|"+(now.hour>=VOTE_CLOSE_HOUR);
   const v=currentView();
   document.getElementById("todayLabel").textContent=fmt(now.date)+" · 우리 가족의 하루 한 장";
   const ready = S.status==="ready" && !S.renaming;
   const tabs=document.getElementById("tabs"); tabs.hidden=!ready;
-  for (const a of tabs.querySelectorAll("a")){ if (a.dataset.v===v) a.setAttribute("aria-current","page"); else a.removeAttribute("aria-current"); }
+  const group = v==="talk" ? "talk" : "shot";
+  for (const a of tabs.querySelectorAll("a")){ if (a.dataset.v===group) a.setAttribute("aria-current","page"); else a.removeAttribute("aria-current"); }
 
   const meBox=document.getElementById("meBox"); meBox.replaceChildren();
   if (S.status==="ready" && S.me){
@@ -411,10 +557,11 @@ function render(){
   else if (S.status==="noinvite") nodes=viewMessage("초대 링크로 열어주세요","가족에게 받은 초대 링크(#join= 이 붙은 주소)로 한 번만 열면, 다음부터는 그냥 열려요.");
   else if (S.status==="offline"){ nodes=viewMessage("연결이 안 돼요", S.err||"인터넷 연결을 확인한 뒤 화면을 새로 고쳐주세요."); if (S.errDetail) nodes.push(h("p",{class:"sub"},"자세한 내용: "+S.errDetail)); nodes.push(h("button",{class:"btn",onclick:()=>location.reload()},"다시 시도")); }
   else if (S.status==="pick" || S.renaming) nodes=viewPick();
-  else nodes = v==="vote"?viewVote(now): v==="result"?viewResult(now): v==="gallery"?viewGallery(now): viewToday(now);
+  else if (v==="talk") nodes=viewTalk(now);
+  else { nodes = v==="vote"?viewVote(now): v==="result"?viewResult(now): v==="gallery"?viewGallery(now): viewToday(now); nodes.unshift(shotTabs(v)); }
   if (S.slow && S.status==="ready") nodes.unshift(h("p",{class:"notice"},"일부 사진을 불러오지 못했어요. 인터넷 연결을 확인해주세요."));
   view.replaceChildren(h("div",{class:"wrap"},nodes));
-  if (active==="caption"){ const c=document.getElementById("caption"); if(c){ c.focus(); const l=c.value.length; try{c.setSelectionRange(l,l);}catch(e){} } }
+  if (["caption","talkQ","talkA"].includes(active)){ const c=document.getElementById(active); if(c){ c.focus(); const l=c.value.length; try{c.setSelectionRange(l,l);}catch(e){} } }
 }
 
 /* ---------- 불러오기 ---------- */
@@ -439,6 +586,7 @@ async function refresh(){
     S.me=r.data||null;
     if (!S.me){ S.status = S.joinCode ? "pick" : "noinvite"; render(); return; }
     await loadData();
+    await loadTalk();
     S.status="ready";
   }catch(e){
     if (S.status==="ready") S.slow=true;
@@ -484,7 +632,7 @@ document.addEventListener("visibilitychange",()=>{ if (document.visibilityState=
 setInterval(()=>{
   if (document.visibilityState!=="visible") return;
   const n=kst();
-  if (S.status==="ready" && !S.busy && document.activeElement?.id!=="caption") refresh();
+  if (S.status==="ready" && !S.busy && document.activeElement?.tagName!=="INPUT") refresh();
   else if (n.date+"|"+(n.hour>=VOTE_CLOSE_HOUR)!==lastStamp) render();
 },60000);
 if (document.readyState==="loading") document.addEventListener("DOMContentLoaded",boot); else boot();
